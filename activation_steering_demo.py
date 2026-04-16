@@ -1,49 +1,33 @@
 """
 activation_steering_demo.py
 
-Demonstrates activation addition (ActAdd) on GPT-2-XL using raw PyTorch hooks.
-Runs fully offline — load the model from a local path before submitting to Slurm.
+Demonstrates activation addition (ActAdd) on GPT-2-XL
 
 Usage:
     python steering_demo.py
-
-To pre-download the model on the login node (requires internet):
-    python -c "
-    from transformers import AutoTokenizer, AutoModelForCausalLM
-    path = '/scratch/gpfs/<YourNetID>/models/gpt2-xl'
-    AutoTokenizer.from_pretrained('gpt2-xl').save_pretrained(path)
-    AutoModelForCausalLM.from_pretrained('gpt2-xl').save_pretrained(path)
-    "
 """
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-
-MODEL_PATH = "/scratch/gpfs/<YourNetID>/models/gpt2-xl"
+# Configs
+MODEL_PATH = "/scratch/gpfs/TSILVER/jx6/models/gpt2-xl"
 
 # Layer to inject the steering vector into.
 # GPT-2-XL has 48 layers (indexed 0–47).
-# Mid-to-late layers (15–25) work best for semantic/tonal steering.
-INJECTION_LAYER = 17
+INJECTION_LAYER = 24
 
 MAX_NEW_TOKENS = 60
 
-
-# ── Model loading ──────────────────────────────────────────────────────────────
-
 print("Loading model and tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, torch_dtype=torch.float32)
+model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, dtype=torch.float32)
 model.eval()
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
 print(f"Model loaded on {device}.\n")
 
-
-# ── Core steering utilities ───────────────────────────────────────────────────
 
 def get_mean_activation(prompt: str) -> torch.Tensor:
     """
@@ -65,23 +49,50 @@ def get_mean_activation(prompt: str) -> torch.Tensor:
     hook.remove()
 
     # Mean-pool over the sequence length → [hidden_dim]
-    return captured["hidden"].squeeze(0).mean(dim=0)
+    # return captured["hidden"].squeeze(0).mean(dim=0)
+    return captured["hidden"][-1, :]  # last token only, shape [hidden_dim]
+
+
+def layer_sweep(prompt, steering_vec, coeff, layers):
+    """Try injecting at each layer and print the result."""
+    for layer in layers:
+        inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+        def make_hook(l):
+            def hook_fn(module, input, output):
+                output[0][:] += coeff * steering_vec.to(device)
+                return output
+
+            return hook_fn
+
+        hook = model.transformer.h[layer].register_forward_hook(make_hook(layer))
+        with torch.no_grad():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=40,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        hook.remove()
+
+        new_tokens = out[0][inputs["input_ids"].shape[1] :]
+        text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+        print(f"  Layer {layer:2d}: {text}")
 
 
 def compute_steering_vector(
-    positive_prompt: str,
-    negative_prompt: str,
+    positive_prompts: list[str], negative_prompts: list[str]
 ) -> torch.Tensor:
-    """
-    Compute a steering vector as the difference in mean activations
-    between a positive and negative contrastive prompt pair.
-
-    The resulting vector points from the negative concept toward the
-    positive concept in the residual stream space.
-    """
-    pos = get_mean_activation(positive_prompt)
-    neg = get_mean_activation(negative_prompt)
-    return pos - neg
+    """Average over multiple contrastive pairs for a more robust steering vector."""
+    assert len(positive_prompts) == len(negative_prompts)
+    diffs = []
+    for pos, neg in zip(positive_prompts, negative_prompts):
+        p = get_mean_activation(pos)
+        n = get_mean_activation(neg)
+        diffs.append(p - n)
+    vec = torch.stack(diffs).mean(dim=0)
+    print(f'vector norm: {vec.norm()}')
+    return vec
 
 
 def generate(
@@ -92,21 +103,15 @@ def generate(
     """
     Generate text from a prompt, optionally injecting a scaled steering
     vector into the residual stream at every forward pass through INJECTION_LAYER.
-
-    Args:
-        prompt:          The input text.
-        steering_vector: Precomputed vector of shape [hidden_dim].
-        coeff:           Scale factor. Positive steers toward the concept,
-                         negative steers away. Zero = unsteered baseline.
     """
     inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
     if steering_vector is not None and coeff != 0.0:
         # Expand to [1, 1, hidden_dim] so it broadcasts over batch and seq dims
-        vec = steering_vector.to(device).unsqueeze(0).unsqueeze(0)
+        # vec = steering_vector.to(device).unsqueeze(0).unsqueeze(0)
 
         def hook_fn(module, input, output):
-            output[0][:] += coeff * vec
+            output[0][:] += coeff * steering_vector.to(device)
             return output
 
         hook = model.transformer.h[INJECTION_LAYER].register_forward_hook(hook_fn)
@@ -115,7 +120,7 @@ def generate(
         output_ids = model.generate(
             **inputs,
             max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=False,       # greedy decoding — deterministic and easier to compare
+            do_sample=False,  # greedy decoding
             pad_token_id=tokenizer.eos_token_id,
         )
 
@@ -123,7 +128,7 @@ def generate(
         hook.remove()
 
     # Decode only the newly generated tokens (not the prompt)
-    new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
+    new_tokens = output_ids[0][inputs["input_ids"].shape[1] :]
     return tokenizer.decode(new_tokens, skip_special_tokens=True)
 
 
@@ -142,8 +147,8 @@ def run_demo(
     """
     print("=" * 70)
     print(f"DEMO: {demo_name}")
-    print(f"  Positive prompt : \"{positive_prompt}\"")
-    print(f"  Negative prompt : \"{negative_prompt}\"")
+    print(f'  Positive prompt : "{positive_prompt}"')
+    print(f'  Negative prompt : "{negative_prompt}"')
     print(f"  Injection layer : {INJECTION_LAYER}")
     print("=" * 70)
 
@@ -151,7 +156,7 @@ def run_demo(
     print(f"Steering vector computed. Norm: {steering_vec.norm().item():.2f}\n")
 
     for prompt in test_prompts:
-        print(f"Prompt: \"{prompt}\"\n")
+        print(f'Prompt: "{prompt}"\n')
         for coeff in coefficients:
             label = f"coeff={coeff:+.0f}"
             if coeff == 0.0:
@@ -167,45 +172,55 @@ def run_demo(
 
 if __name__ == "__main__":
 
+    happy_positives = [
+        "Everything is amazing, wonderful, and happy.",
+        "I'm so extremely happy today."
+    ]
+
+    happy_negatives = [
+        "Everything is awful, depressing, and miserable.",
+        "I'm so extremely sad today."
+    ]
+
+    banana_positives = [
+        "I talk about bananas constantly",
+        "the most important thing in the world is bananas"
+    ]
+
+    banana_negatives = [
+        "I do not talk about bananas constantly",
+        "bananas are not relevant"
+    ]
+
+    formal_positives = [
+        "I always speak formally in a manner that is prim and proper."
+    ]
+
+    formal_negatives = [
+        "I constantly use slang and never speak formally."
+    ]
+
     # ── Demo 1: Sentiment steering ────────────────────────────────────────────
-    # The classic and most reliable demo. The steering vector encodes a direction
-    # in activation space that roughly corresponds to positive vs. negative affect.
     run_demo(
-        demo_name="Sentiment Steering (positive ↔ negative)",
-        positive_prompt="I feel wonderful, joyful, and full of hope.",
-        negative_prompt="I feel terrible, miserable, and full of despair.",
+        demo_name="Sentiment Steering",
+        positive_prompt=happy_positives,
+        negative_prompt=happy_negatives,
         test_prompts=[
             "Today I went to the store and",
-            "The weather outside is",
+            "The weather outside today",
         ],
-        coefficients=[-20.0, 0.0, 20.0],
+        coefficients=[-1, 0.0, 1],
     )
 
     # ── Demo 2: Topic injection ────────────────────────────────────────────────
     # Injects a concept (bananas) regardless of what the prompt is about.
-    # This is the "wedding" example from the original ActAdd paper, adapted.
-    # It's visually striking because the effect is clear and a little absurd.
     run_demo(
         demo_name="Topic Injection (bananas)",
-        positive_prompt="bananas, yellow fruit, tropical, bunch of bananas",
-        negative_prompt="",  # empty string as the neutral/negative baseline
+        positive_prompt=banana_positives,
+        negative_prompt=banana_negatives,
         test_prompts=[
             "The stock market today",
             "Scientists have discovered a new",
         ],
-        coefficients=[0.0, 15.0, 30.0],
+        coefficients=[0.0, 1],
     )
-
-    # ── Demo 3: Formality steering ────────────────────────────────────────────
-    # Steers between casual/colloquial and formal/academic registers.
-    run_demo(
-        demo_name="Formality Steering (casual ↔ formal)",
-        positive_prompt="The study hereby presents empirical evidence demonstrating significant findings.",
-        negative_prompt="Yo so basically we found out some pretty wild stuff lol.",
-        test_prompts=[
-            "Our results show that",
-        ],
-        coefficients=[-15.0, 0.0, 15.0],
-    )
-
-    print("Done.")

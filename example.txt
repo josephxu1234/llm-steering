@@ -1,0 +1,95 @@
+Loading model and tokenizer...
+Model loaded on cuda.
+
+======================================================================
+DEMO: Sentiment Steering
+  Positive prompt : "['Everything is amazing, wonderful, and happy.', "I'm so extremely happy today."]"
+  Negative prompt : "['Everything is awful, depressing, and miserable.', "I'm so extremely sad today."]"
+  Injection layer : 24
+======================================================================
+vector norm: 47.93225860595703
+Steering vector computed. Norm: 47.93
+
+Prompt: "Today I went to the store and"
+
+  [coeff=-1]
+   bought a new pair of shoes. I was walking down the street and I saw a man walking down the street with a pair of shoes. I thought it was a homeless person. I walked up to him and asked him if he was homeless. He said he was. I asked him if he had
+
+  [coeff=+0 (baseline)]
+   bought a new pair of shoes. I was wearing the same pair of shoes for the last two years. I was so excited to get them back. I was so excited to get them back. I was so excited to get them back. I was so excited to get them back. I was so
+
+  [coeff=+1]
+   bought a new pair of shoes. I was so excited to wear them. I was so happy. I was so happy. I was so happy. I was so happy. I was so happy. I was so happy. I was so happy. I was so happy. I was so happy.
+
+----------------------------------------------------------------------
+
+Prompt: "The weather outside today"
+
+  [coeff=-1]
+   is going to be a bit of a challenge. I'm not sure if it's going to be a good day for the race. I'm not sure if it's going to be a good day for the riders. I'm not sure if it's going to be a good day for the fans
+
+  [coeff=+0 (baseline)]
+   is perfect. The sun is shining, the birds are singing, and the sky is blue. I'm feeling good. I'm ready to go.
+
+I'm ready to go.
+
+I'm ready to go.
+
+I'm ready to go.
+
+I'm ready to
+
+  [coeff=+1]
+   is perfect. I'm going to go for a walk."
+
+"I'm going to go for a walk."
+
+"I'm going to go for a walk."
+
+"I'm going to go for a walk."
+
+"I'm going to go for a walk."
+
+----------------------------------------------------------------------
+
+======================================================================
+DEMO: Topic Injection (bananas)
+  Positive prompt : "['I talk about bananas constantly', 'the most important thing in the world is bananas']"
+  Negative prompt : "['I do not talk about bananas constantly', 'bananas are not relevant']"
+  Injection layer : 24
+======================================================================
+vector norm: 100.60623168945312
+Steering vector computed. Norm: 100.61
+
+Prompt: "The stock market today"
+
+  [coeff=+0 (baseline)]
+   is a lot different than it was in the late 1990s. The Dow Jones Industrial Average is up more than 1,000 points since the end of the last recession. The S&P 500 is up more than 1,000 points since the end of the last recession.
+
+But the stock
+
+  [coeff=+1]
+   is a lot more volatile than it was in the early 1900s. The Dow Jones has gone up about 100 percent since the turn of the century, and the S&P 500 has gone up about 200 percent.
+. . . and the price of bananas.
+The banana is a fruit,
+
+----------------------------------------------------------------------
+
+Prompt: "Scientists have discovered a new"
+
+  [coeff=+0 (baseline)]
+   species of dinosaur in the fossil-rich rocks of the Philippines.
+
+The new species, named the "Pachyrhinosaurus" after the Greek god of thunder, is a member of the same family as the famous Tyrannosaurus rex.
+
+The new species was discovered in the
+
+  [coeff=+1]
+   species of tree that is the size of a banana and is being eaten by humans.
+
+The tree, called the Bamboo, is native to South America and is the largest tree in the world.
+
+It is so big that it is being eaten by humans, and it's being eaten
+
+----------------------------------------------------------------------
+
